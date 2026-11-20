@@ -81,10 +81,23 @@ class Canvas:
     def blend(self, cov, x0, y0, rgb, alpha=1.0):
         if cov.size == 0:
             return
-        a = (cov * alpha)[..., None].astype(np.float32)
         region = self.img[y0:y0 + cov.shape[0], x0:x0 + cov.shape[1]]
+        color = np.asarray(rgb, np.float32)
+        nz = np.flatnonzero(cov)
+        if nz.size < cov.size * 0.35:   # thin lines and text: only touch covered pixels
+            if nz.size == 0:
+                return
+            a = (cov.ravel()[nz] * alpha).astype(np.float32)[:, None]
+            flat = region.reshape(-1, 3) if region.flags['C_CONTIGUOUS'] else None
+            if flat is not None:
+                flat[nz] = flat[nz] * (1 - a) + a * color
+                return
+            ys, xs = np.divmod(nz, cov.shape[1])
+            region[ys, xs] = region[ys, xs] * (1 - a) + a * color
+            return
+        a = (cov * alpha)[..., None].astype(np.float32)
         region *= 1 - a
-        region += a * np.asarray(rgb, np.float32)
+        region += a * color
 
     def blend_rgba(self, rgba, x0, y0, alpha=1.0):
         a = rgba[..., 3:4] * alpha
@@ -182,6 +195,8 @@ class Canvas:
             return
         if len(pts) < 2:
             return
+        if not dashes and len(pts) <= 5 and self._stroke_axis_aligned(pts, width, rgb, alpha, clip):
+            return
         r = max(width, 0.5) / 2.0
         lo, hi = pts.min(axis=0) - r - 2, pts.max(axis=0) + r + 2
         box = self._box(lo[0], lo[1], hi[0], hi[1], clip)
@@ -225,7 +240,8 @@ class Canvas:
         cov = np.zeros((y1 - y0, x1 - x0), np.float32)
         K = int(np.ceil(r + 1.0))
         oy, ox = np.mgrid[-K:K + 1, -K:K + 1]
-        oy, ox = oy.ravel(), ox.ravel()
+        keep = np.hypot(ox, oy) <= r + 1.5
+        oy, ox = oy[keep], ox[keep]
         cx = np.floor(P[:, 0]).astype(np.intp)
         cy = np.floor(P[:, 1]).astype(np.intp)
         # process in blocks to bound memory
@@ -238,8 +254,47 @@ class Canvas:
             c = np.clip(r + 0.5 - dist, 0.0, 1.0)
             m = (c > 0) & (gx >= x0) & (gx < x1) & (gy >= y0) & (gy < y1)
             if m.any():
-                np.maximum.at(cov, (gy[m] - y0, gx[m] - x0), c[m].astype(np.float32))
+                flat = (gy[m] - y0) * (x1 - x0) + (gx[m] - x0)
+                val = c[m].astype(np.float32)
+                order = np.argsort(val, kind='stable')
+                flat, val = flat[order], val[order]
+                cur = cov.ravel()
+                # ascending order: for repeated pixels the last (largest) write wins
+                np.maximum(cur[flat], val, out=val)
+                cur[flat] = val
         self.blend(cov, x0, y0, rgb, alpha)
+
+    def _stroke_axis_aligned(self, pts, width, rgb, alpha, clip):
+        """Exact box-filtered coverage for polylines made only of horizontal/vertical segments."""
+        a, b = pts[:-1], pts[1:]
+        horiz = np.abs(a[:, 1] - b[:, 1]) < 1e-9
+        vert = np.abs(a[:, 0] - b[:, 0]) < 1e-9
+        if not np.all(horiz | vert):
+            return False
+        h = width / 2.0
+        for (ax_, ay_), (bx_, by_), hz in zip(a, b, horiz):
+            if hz:
+                xa, xb = sorted((ax_, bx_))
+                xa, xb = xa - (h if len(pts) > 2 else 0.0), xb + (h if len(pts) > 2 else 0.0)
+                self._aa_rect(xa, ay_ - h, xb, ay_ + h, rgb, alpha, clip)
+            else:
+                ya, yb = sorted((ay_, by_))
+                ya, yb = ya - (h if len(pts) > 2 else 0.0), yb + (h if len(pts) > 2 else 0.0)
+                self._aa_rect(ax_ - h, ya, ax_ + h, yb, rgb, alpha, clip)
+        return True
+
+    def _aa_rect(self, x0, y0, x1, y1, rgb, alpha=1.0, clip=None):
+        bx0, by0, bx1, by1 = self._box(x0, y0, x1, y1, clip)
+        if bx1 <= bx0 or by1 <= by0:
+            return
+        if clip is not None:
+            x0, y0 = max(x0, clip[0]), max(y0, clip[1])
+            x1, y1 = min(x1, clip[2]), min(y1, clip[3])
+        cols = np.arange(bx0, bx1, dtype=np.float64)
+        rows = np.arange(by0, by1, dtype=np.float64)
+        cx = np.clip(np.minimum(cols + 1, x1) - np.maximum(cols, x0), 0, 1)
+        cy = np.clip(np.minimum(rows + 1, y1) - np.maximum(rows, y0), 0, 1)
+        self.blend(np.outer(cy, cx).astype(np.float32), bx0, by0, rgb, alpha)
 
     # ---- text ------------------------------------------------------------------------------------
 
@@ -289,6 +344,10 @@ class Canvas:
             polys += [p + (dx, dy) for p in ps]
         if not polys:
             return
+        if clip is None and (rotation % 360) in (0, 90):
+            self._text_cached(x, y, lines, widths, size, rgb, alpha, weight, ha, top, asc, line_h, block_w,
+                              int(rotation % 360))
+            return
         th = np.deg2rad(rotation)
         c, sn = np.cos(th), np.sin(th)
         out = []
@@ -297,6 +356,59 @@ class Canvas:
             yr = p[:, 0] * sn + p[:, 1] * c
             out.append(np.column_stack([x + xr, y - yr]))
         self.fill_polys(out, rgb, alpha, clip, ss=4)
+
+    _glyph_cache = {}
+
+    def _glyph(self, ch, size, weight, rot):
+        key = (ch, round(size * 4) / 4, _weight_key(weight), rot)
+        g = Canvas._glyph_cache.get(key)
+        if g is None:
+            polys, adv = text_polys(ch, key[1], weight)
+            if polys:
+                pts = np.concatenate(polys)
+                if rot == 90:   # (x, y) -> (-y, x): text running upwards
+                    polys = [np.column_stack([-p[:, 1], p[:, 0]]) for p in polys]
+                    pts = np.concatenate(polys)
+                # pixel space (y down), origin = pen position
+                polys = [np.column_stack([p[:, 0], -p[:, 1]]) for p in polys]
+                pts = np.column_stack([pts[:, 0], -pts[:, 1]])
+                ox, oy = int(np.floor(pts[:, 0].min())) - 1, int(np.floor(pts[:, 1].min())) - 1
+                w = int(np.ceil(pts[:, 0].max())) + 2 - ox
+                h = int(np.ceil(pts[:, 1].max())) + 2 - oy
+                cov = self.coverage([p - (ox, oy) for p in polys], (0, 0, w, h), ss=4)
+            else:
+                cov, ox, oy = None, 0, 0
+            g = (cov, ox, oy, adv)
+            if len(Canvas._glyph_cache) > 4000:
+                Canvas._glyph_cache.clear()
+            Canvas._glyph_cache[key] = g
+        return g
+
+    def _text_cached(self, x, y, lines, widths, size, rgb, alpha, weight, ha, top, asc, line_h, block_w, rot):
+        for i, (line, lw) in enumerate(zip(lines, widths)):
+            if ha == 'center':
+                dx = -lw / 2 if len(lines) == 1 else -block_w / 2 + (block_w - lw) / 2
+            elif ha == 'right':
+                dx = -lw if len(lines) == 1 else -block_w + (block_w - lw)
+            else:
+                dx = 0.0
+            dy = top - asc - i * line_h   # baseline offset in text space (y up)
+            if rot == 0:
+                px, py = x + dx, y - dy
+            else:                          # rotated 90: text x -> screen -y, text y -> screen -x
+                px, py = x - dy, y - dx
+            for ch in line:
+                cov, ox, oy, adv = self._glyph(ch, size, weight, rot)
+                if cov is not None:
+                    gx, gy = int(round(px)) + ox, int(round(py)) + oy
+                    x0, y0 = max(gx, 0), max(gy, 0)
+                    x1, y1 = min(gx + cov.shape[1], self.w), min(gy + cov.shape[0], self.h)
+                    if x1 > x0 and y1 > y0:
+                        self.blend(cov[y0 - gy:y1 - gy, x0 - gx:x1 - gx], x0, y0, rgb, alpha)
+                if rot == 0:
+                    px += adv
+                else:
+                    py -= adv
 
     # ---- images ----------------------------------------------------------------------------------
 

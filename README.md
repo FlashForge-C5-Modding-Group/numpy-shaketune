@@ -44,8 +44,8 @@ config to Shake&Tune's own `load_config`.
 
 ## Notes
 
-- Graphs take longer on a slow CPU (about 50 s for an input shaper graph on a Creator 5). Shake&Tune draws them in
-  its background process, so printing isn't held up.
+- Graphs take a while on a slow CPU. On a Creator 5 drawing a graph takes about 10 s; an input shaper graph needs
+  about a minute in total because Klipper's own filter fitting (`shaper_calibrate`) is most of the work.
 - Raw recordings written with the zstandard stand-in are gzip, not Zstandard. Reading a real `.zst` recording needs the
   real zstandard package.
 - The Klippain logo on the graphs is upside down on purpose. Set `UPSIDE_DOWN_LOGO = False` in
