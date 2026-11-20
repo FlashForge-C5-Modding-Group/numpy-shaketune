@@ -64,8 +64,8 @@ It finds `/usr/data/klipper` (Kalico) and `/usr/data/printer_data/config`, and r
   older than 3.5. zstandard and GitPython still come from the system if they're there.
 - Shake&Tune 6 says it needs Python 3.9, but only its command line tool (`shaketune.cli`) uses 3.9 syntax; the part
   Klipper loads works on 3.8.
-- Memory is tight on a K1 SE (209 MB): an input shaper graph peaks around 105 MB and takes about a minute. Simple AF's
-  128 MB swap file covers the rest. Close the camera stream while Shake&Tune draws if Klipper reports timer errors.
+- Memory is tight on a K1 SE (209 MB). An input shaper graph peaks around 125 MB and takes about a minute; before the
+  memory work below it peaked around 167 MB and the kernel killed it.
 - The K1's POSIX semaphores are broken, so `multiprocessing.Queue` and `Value` hang and recordings never get written.
   When the loader finds that, it gives Shake&Tune's recorder a pipe-based queue and shared-memory flag instead
   (`compat/_nst_pipequeue.py`). Other systems keep the real ones.
@@ -77,6 +77,18 @@ It finds `/usr/data/klipper` (Kalico) and `/usr/data/printer_data/config`, and r
 `upstream/shaketune` as the package `extras.shaketune_upstream` (Shake&Tune imports Klipper's `shaper_calibrate`
 relative to `extras`, so it has to live there), defaults `result_folder` to the printer's config folder and hands the
 config to Shake&Tune's own `load_config`.
+
+## Memory
+
+Upstream Shake&Tune with real matplotlib uses a lot of memory for one graph. Here:
+
+- The renderer works on whole-image operations (blending, the spectrogram, rectangles, PNG output) in bands of rows,
+  so its temporary buffers stay a few MB. The float canvas itself (about 47 MB for an input shaper graph) is the
+  biggest part left.
+- Recordings (`.stdata`) are loaded straight into numpy arrays (`compat/_nst_measurements.py`) instead of lists of
+  Python floats: about 13 MB instead of 40-80 MB per axis, and about 4 times faster. Shake&Tune only reads samples
+  through `np.array()`, so the results are identical. If a file doesn't look as expected, Shake&Tune's own reader is
+  used.
 
 ## Notes
 
