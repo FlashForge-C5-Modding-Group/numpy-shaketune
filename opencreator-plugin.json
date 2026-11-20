@@ -1,0 +1,10 @@
+{
+  "id": "numpy-shaketune",
+  "name": "Shake&Tune (numpy only)",
+  "version": "0.1.0",
+  "description": "Klippain Shake&Tune with a numpy-only stand-in for matplotlib, zstandard and GitPython, for printers that only have numpy (like the Creator 5).",
+  "klippy_extras": ["shaketune.py"],
+  "klipper_config": "shaketune.cfg",
+  "restart": ["klipper"],
+  "scripts": {"install": "scripts/install.sh", "update": "scripts/update.sh", "uninstall": "scripts/uninstall.sh"}
+}
