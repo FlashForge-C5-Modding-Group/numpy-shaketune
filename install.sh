@@ -54,9 +54,16 @@ fi
 if ! grep -q '^\[include shaketune\.cfg\]' "$CONFIG/printer.cfg"; then
     cp "$CONFIG/printer.cfg" "$CONFIG/printer.cfg.before-shaketune"
     if grep -q '^#\*# <-* SAVE_CONFIG' "$CONFIG/printer.cfg"; then
-        sed -i '0,/^#\*# <-* SAVE_CONFIG/s//[include shaketune.cfg]\n\n&/' "$CONFIG/printer.cfg"
+        awk '!done && /^#\*# <-* SAVE_CONFIG/ { print "[include shaketune.cfg]"; print ""; done = 1 } { print }' \
+            "$CONFIG/printer.cfg" > "$CONFIG/printer.cfg.shaketune-tmp"
+        cat "$CONFIG/printer.cfg.shaketune-tmp" > "$CONFIG/printer.cfg"
+        rm -f "$CONFIG/printer.cfg.shaketune-tmp"
     else
         printf '\n[include shaketune.cfg]\n' >> "$CONFIG/printer.cfg"
+    fi
+    if ! grep -q '^\[include shaketune\.cfg\]' "$CONFIG/printer.cfg"; then
+        echo "Couldn't add [include shaketune.cfg] to printer.cfg; add it by hand" >&2
+        exit 1
     fi
     echo "Added [include shaketune.cfg] to printer.cfg (backup: printer.cfg.before-shaketune)"
 fi
