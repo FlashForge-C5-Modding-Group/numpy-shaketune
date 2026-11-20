@@ -47,26 +47,7 @@ Use it like normal Shake&Tune: `AXES_SHAPER_CALIBRATION`, `COMPARE_BELTS_RESPONS
 `result_folder` in `[shaketune]` to change it). Other options are in Shake&Tune's
 [docs](https://github.com/Frix-x/klippain-shaketune/blob/main/docs/README.md).
 
-## Creality K1 / K1 SE (Simple AF)
-
-This `k1` branch is the `manual` branch with fixes for the older Python stack on K1-series printers running
-Simple AF (pellcorp): Python 3.8, numpy 1.16 and matplotlib 2.2.
-
-```
-git clone -b k1 https://github.com/FlashForge-C5-Modding-Group/numpy-shaketune /usr/data/numpy-shaketune
-sh /usr/data/numpy-shaketune/install.sh
-```
-
-It finds `/usr/data/klipper` (Kalico) and `/usr/data/printer_data/config`, and restarts Klipper with
-`/etc/init.d/S55klipper_service`.
-
-- matplotlib 2.2 is too old for Shake&Tune 6, so the compat matplotlib is used instead whenever the installed one is
-  older than 3.5. zstandard and GitPython still come from the system if they're there.
-- Shake&Tune 6 says it needs Python 3.9, but only its command line tool (`shaketune.cli`) uses 3.9 syntax; the part
-  Klipper loads works on 3.8.
-- Memory is tight on a K1 SE (209 MB): an input shaper graph peaks around 105 MB and takes about a minute. Simple AF's
-  128 MB swap file covers the rest. Close the camera stream while Shake&Tune draws if Klipper reports timer errors.
-- Simple AF's own `BELTS_SHAPER_CALIBRATION` macro stays; Shake&Tune's belts test is `COMPARE_BELTS_RESPONSES`.
+For Creality K1-series printers on Simple AF (Python 3.8, numpy 1.16, matplotlib 2.2), use the `k1` branch.
 
 ## How it loads
 
