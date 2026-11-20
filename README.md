@@ -16,24 +16,36 @@ The stand-ins go at the **end** of Python's path, so a printer that has the real
 The numbers on the graphs come from Shake&Tune's own numpy code, so recommendations are identical; the drawing is
 a close match to matplotlib's.
 
-## Install (OpenCreator printers)
+## Install (any Klipper or Kalico printer)
 
-Needs git (`opkg install git` if it isn't there yet). Then:
+This is the `manual` branch. On OpenCreator printers, the `main` branch installs with `oc-plugin` instead.
+
+Needs git and numpy in Klipper's Python (every Klipper install has numpy for input shaping). Then:
 
 ```
-oc-plugin install https://github.com/FlashForge-C5-Modding-Group/numpy-shaketune
+git clone -b manual https://github.com/FlashForge-C5-Modding-Group/numpy-shaketune ~/numpy-shaketune
+~/numpy-shaketune/install.sh
 ```
 
-The install script downloads upstream Shake&Tune into the plugin folder, the plugin manager links `shaketune.py`
-into Klipper and `shaketune.cfg` into the config, and Klipper restarts. `oc-plugin update numpy-shaketune` pulls the
-newest Shake&Tune; `oc-plugin remove numpy-shaketune` takes it all out again.
+`install.sh` finds Klipper and the config folder (`~/klipper` and `~/printer_data/config`, plus the usual
+OpenCreator and K1 locations), downloads upstream Shake&Tune into `upstream/`, links `shaketune.py` into
+`klippy/plugins` (Kalico) or `klippy/extras` (Klipper), copies `shaketune.cfg` next to `printer.cfg`, adds
+`[include shaketune.cfg]` above the SAVE_CONFIG block (backup in `printer.cfg.before-shaketune`) and restarts Klipper.
+
+| Option | |
+|---|---|
+| `--klipper DIR` | Klipper checkout, if it isn't found on its own |
+| `--config DIR` | folder with `printer.cfg` |
+| `--no-restart` | don't restart Klipper |
+| `--uninstall` | remove the link, the include line and `upstream/` (keeps `shaketune.cfg` and the results) |
+
+To update, run `git -C ~/numpy-shaketune pull` and `~/numpy-shaketune/install.sh` again; that also pulls the newest
+Shake&Tune.
 
 Use it like normal Shake&Tune: `AXES_SHAPER_CALIBRATION`, `COMPARE_BELTS_RESPONSES`, `CREATE_VIBRATIONS_PROFILE`,
 `AXES_MAP_CALIBRATION`, `EXCITATE_AXIS_AT_FREQ`. Graphs go to `ShakeTune_results` next to `printer.cfg` (set
 `result_folder` in `[shaketune]` to change it). Other options are in Shake&Tune's
 [docs](https://github.com/Frix-x/klippain-shaketune/blob/main/docs/README.md).
-
-For a printer without the OpenCreator plugin manager, use the `manual` branch.
 
 ## How it loads
 
