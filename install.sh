@@ -60,5 +60,5 @@ if ! grep -q '^\[include shaketune\.cfg\]' "$CONFIG/printer.cfg"; then
     fi
     echo "Added [include shaketune.cfg] to printer.cfg (backup: printer.cfg.before-shaketune)"
 fi
-echo "Linked $LINK"
+echo "Linked $LINK (numpy-shaketune $(cat "$DIR/VERSION" 2>/dev/null))"
 restart
