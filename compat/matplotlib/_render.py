@@ -62,6 +62,15 @@ def text_polys(s, size, weight='normal'):
     return polys, x
 
 
+BAND_PIXELS = 1 << 18   # whole-image operations work in bands of rows this big, to keep temporaries small
+
+
+def _bands(rows, width, pixels=BAND_PIXELS):
+    step = max(1, pixels // max(1, width))
+    for r in range(0, rows, step):
+        yield r, min(rows, r + step)
+
+
 class Canvas:
     def __init__(self, width, height, background=(1.0, 1.0, 1.0)):
         self.w, self.h = int(width), int(height)
@@ -95,15 +104,20 @@ class Canvas:
             ys, xs = np.divmod(nz, cov.shape[1])
             region[ys, xs] = region[ys, xs] * (1 - a) + a * color
             return
-        a = (cov * alpha)[..., None].astype(np.float32)
-        region *= 1 - a
-        region += a * color
+        for r0, r1 in _bands(cov.shape[0], cov.shape[1]):
+            a = (cov[r0:r1] * alpha).astype(np.float32)[..., None]
+            band = region[r0:r1]
+            band *= 1 - a
+            band += a * color
 
     def blend_rgba(self, rgba, x0, y0, alpha=1.0):
-        a = rgba[..., 3:4] * alpha
         region = self.img[y0:y0 + rgba.shape[0], x0:x0 + rgba.shape[1]]
-        region *= 1 - a
-        region += a * rgba[..., :3]
+        for r0, r1 in _bands(rgba.shape[0], rgba.shape[1]):
+            src = rgba[r0:r1].astype(np.float32, copy=False)
+            a = src[..., 3:4] * np.float32(alpha)
+            band = region[r0:r1]
+            band *= 1 - a
+            band += a * src[..., :3]
 
     # ---- polygons --------------------------------------------------------------------------------
 
@@ -154,7 +168,7 @@ class Canvas:
             np.clip(col, 0, WS, out=col)
             delta = np.zeros((r1 - r0, WS + 1), np.int16)
             np.add.at(delta, (ri, col), e_d[ei])
-            wind = np.cumsum(delta[:, :WS], axis=1)
+            wind = np.cumsum(delta[:, :WS], axis=1, dtype=np.int16)
             inside = (wind != 0) if rule == 'nonzero' else (wind % 2 != 0)
             n = (r1 - r0) // ss
             cov[r0 // ss:r0 // ss + n] = inside[:n * ss].reshape(n, ss, W, ss).mean(axis=(1, 3))
@@ -173,10 +187,29 @@ class Canvas:
         cov = self.coverage(polys, box, ss, rule)
         self.blend(cov, box[0], box[1], rgb, alpha)
 
-    def rect(self, x0, y0, x1, y1, rgb, alpha=1.0, clip=None):
+    def rect(self, x0, y0, x1, y1, rgb, alpha=1.0, clip=None, ss=2):
         xa, xb = sorted((x0, x1))
         ya, yb = sorted((y0, y1))
-        self.fill_polys([np.array([[xa, ya], [xb, ya], [xb, yb], [xa, yb]])], rgb, alpha, clip, ss=2)
+        if not all(np.isfinite(v) for v in (xa, xb, ya, yb)):
+            self.fill_polys([np.array([[xa, ya], [xb, ya], [xb, yb], [xa, yb]])], rgb, alpha, clip, ss=ss)
+            return
+        # Same samples as coverage() on the rectangle polygon, but a rectangle's coverage is (rows x columns),
+        # so it's blended a band at a time instead of building a full-size mask.
+        bx0, by0, bx1, by1 = self._box(xa, ya, xb + 1, yb + 1, clip)
+        if bx1 <= bx0 or by1 <= by0 or xa == xb or ya == yb:
+            return
+        W, H = bx1 - bx0, by1 - by0
+        ca, cb = (min(max(int(np.ceil((x - bx0) * ss - 0.5)), 0), W * ss) for x in (xa, xb))
+        sub = np.arange(W * ss)
+        cx = ((sub >= ca) & (sub < cb)).reshape(W, ss).sum(axis=1).astype(np.float32) / ss
+        ys = by0 + (np.arange(H * ss) + 0.5) / ss
+        cy = ((ys >= ya) & (ys < yb)).reshape(H, ss).sum(axis=1).astype(np.float32) / ss
+        rows = np.flatnonzero(cy)
+        if rows.size == 0 or not cx.any():
+            return
+        for r0, r1 in _bands(int(rows[-1]) + 1 - int(rows[0]), W):
+            r0, r1 = r0 + int(rows[0]), r1 + int(rows[0])
+            self.blend(np.outer(cy[r0:r1], cx), bx0, by0 + r0, rgb, alpha)
 
     # ---- strokes ---------------------------------------------------------------------------------
 
@@ -426,17 +459,39 @@ class Canvas:
         if smooth:
             u0 = np.clip(np.floor(u).astype(int), 0, w - 1); u1 = np.clip(u0 + 1, 0, w - 1); fu = np.clip(u - u0, 0, 1)
             v0 = np.clip(np.floor(v).astype(int), 0, h - 1); v1 = np.clip(v0 + 1, 0, h - 1); fv = np.clip(v - v0, 0, 1)
-            top = rgba[v0][:, u0] * (1 - fu)[None, :, None] + rgba[v0][:, u1] * fu[None, :, None]
-            bot = rgba[v1][:, u0] * (1 - fu)[None, :, None] + rgba[v1][:, u1] * fu[None, :, None]
-            out = top * (1 - fv)[:, None, None] + bot * fv[:, None, None]
+            if rgba.dtype == np.float32:
+                fu, fv = fu.astype(np.float32), fv.astype(np.float32)
         else:
             ui = np.clip(np.round(u).astype(int), 0, w - 1)
             vi = np.clip(np.round(v).astype(int), 0, h - 1)
-            out = rgba[vi][:, ui]
-        self.blend_rgba(out.astype(np.float32), bx0, by0, alpha)
+        for r0, r1 in _bands(by1 - by0, bx1 - bx0, BAND_PIXELS // 4):
+            if smooth:
+                a0, a1, f = v0[r0:r1, None], v1[r0:r1, None], fv[r0:r1]
+                top = rgba[a0, u0] * (1 - fu)[None, :, None] + rgba[a0, u1] * fu[None, :, None]
+                bot = rgba[a1, u0] * (1 - fu)[None, :, None] + rgba[a1, u1] * fu[None, :, None]
+                out = top * (1 - f)[:, None, None] + bot * f[:, None, None]
+            else:
+                out = rgba[vi[r0:r1, None], ui]
+            self.blend_rgba(out.astype(np.float32), bx0, by0 + r0, alpha)
 
-    def to_rgba8(self):
-        return (np.clip(self.img, 0, 1) * 255 + 0.5).astype(np.uint8)
+    def to_rgba8(self, out=None):
+        out = np.empty(self.img.shape, np.uint8) if out is None else out
+        for r0, r1 in _bands(self.h, self.w * 3):
+            band = np.clip(self.img[r0:r1], 0, 1)
+            band *= 255
+            band += 0.5
+            out[r0:r1] = band
+        return out
+
+    def png_bands(self):
+        """8-bit PNG scanlines (filter byte + RGB), a band at a time, straight from the canvas."""
+        for r0, r1 in _bands(self.h, self.w * 3):
+            rows = np.zeros((r1 - r0, self.w * 3 + 1), np.uint8)
+            band = np.clip(self.img[r0:r1], 0, 1)
+            band *= 255
+            band += 0.5
+            rows[:, 1:] = band.reshape(r1 - r0, self.w * 3)
+            yield rows
 
 
 # ---- PNG ---------------------------------------------------------------------------------------------
@@ -444,10 +499,17 @@ class Canvas:
 def write_png(path, rgb8, dpi=None):
     h, w = rgb8.shape[:2]
     ch = rgb8.shape[2] if rgb8.ndim == 3 else 1
-    ctype = {1: 0, 3: 2, 4: 6}[ch]
     raw = np.empty((h, w * ch + 1), np.uint8)
     raw[:, 0] = 0
     raw[:, 1:] = rgb8.reshape(h, w * ch)
+    write_png_rows(path, [raw], w, h, ch, dpi)
+
+
+def write_png_rows(path, bands, w, h, ch=3, dpi=None):
+    """PNG from an iterable of scanline bands (filter byte + pixels per row), compressed as they come."""
+    ctype = {1: 0, 3: 2, 4: 6}[ch]
+    z = zlib.compressobj(6)
+    idat = b''.join([z.compress(band) for band in bands] + [z.flush()])
 
     def chunk(kind, data):
         return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xFFFFFFFF)
@@ -455,7 +517,7 @@ def write_png(path, rgb8, dpi=None):
     if dpi:
         ppm = int(round(dpi / 0.0254))
         out += chunk(b'pHYs', struct.pack('>IIB', ppm, ppm, 1))
-    out += chunk(b'IDAT', zlib.compress(raw.tobytes(), 6)) + chunk(b'IEND', b'')
+    out += chunk(b'IDAT', idat) + chunk(b'IEND', b'')
     with open(path, 'wb') as f:
         f.write(out)
 

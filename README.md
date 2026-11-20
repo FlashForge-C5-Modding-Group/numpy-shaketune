@@ -42,6 +42,18 @@ For a printer without the OpenCreator plugin manager, use the `manual` branch.
 relative to `extras`, so it has to live there), defaults `result_folder` to the printer's config folder and hands the
 config to Shake&Tune's own `load_config`.
 
+## Memory
+
+Upstream Shake&Tune with real matplotlib uses a lot of memory for one graph. Here:
+
+- The renderer works on whole-image operations (blending, the spectrogram, rectangles, PNG output) in bands of rows,
+  so its temporary buffers stay a few MB. The float canvas itself (about 47 MB for an input shaper graph) is the
+  biggest part left.
+- Recordings (`.stdata`) are loaded straight into numpy arrays (`compat/_nst_measurements.py`) instead of lists of
+  Python floats: about 13 MB instead of 40-80 MB per axis, and about 4 times faster. Shake&Tune only reads samples
+  through `np.array()`, so the results are identical. If a file doesn't look as expected, Shake&Tune's own reader is
+  used.
+
 ## Notes
 
 - Graphs take a while on a slow CPU. On a Creator 5 drawing a graph takes about 10 s; an input shaper graph needs

@@ -114,7 +114,7 @@ def apply_cmap(values01, cmap='inferno'):
     lut = get_cmap(cmap) if isinstance(cmap, str) else cmap
     v = np.asarray(values01, np.float64)
     bad = ~np.isfinite(v)
-    idx = np.clip((np.nan_to_num(v, nan=0.0) * (len(lut) - 1) + 0.5).astype(np.intp), 0, len(lut) - 1)
+    idx = np.clip((np.where(bad, 0.0, v) * (len(lut) - 1) + 0.5).astype(np.intp), 0, len(lut) - 1)
     rgb = lut[idx]
     a = np.where(bad, 0.0, 1.0)[..., None].astype(np.float32)
     return np.concatenate([rgb, a], axis=-1)

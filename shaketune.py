@@ -9,11 +9,39 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 COMPAT = os.path.join(HERE, 'compat')
 UPSTREAM = os.path.join(HERE, 'upstream', 'shaketune')
 PACKAGE = 'extras.shaketune_upstream'
+MIN_MATPLOTLIB = (3, 5)
+
+
+def _matplotlib_too_old():
+    """True when a matplotlib is installed but older than Shake&Tune needs (e.g. 2.2 on Creality K1 firmware)."""
+    try:
+        from importlib import metadata
+        version = metadata.version('matplotlib')
+    except Exception:
+        return False
+    parts = []
+    for piece in version.split('.')[:2]:
+        digits = ''.join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits or 0))
+    return tuple(parts) < MIN_MATPLOTLIB
+
+
+def _use_compat_matplotlib():
+    for name in [m for m in sys.modules if m == 'matplotlib' or m.startswith('matplotlib.')]:
+        del sys.modules[name]
+    path = os.path.join(COMPAT, 'matplotlib')
+    spec = importlib.util.spec_from_file_location('matplotlib', os.path.join(path, '__init__.py'),
+                                                  submodule_search_locations=[path])
+    module = importlib.util.module_from_spec(spec)
+    sys.modules['matplotlib'] = module
+    spec.loader.exec_module(module)
 
 
 def _load_upstream():
     if COMPAT not in sys.path:
         sys.path.append(COMPAT)
+    if _matplotlib_too_old() and getattr(sys.modules.get('matplotlib'), '__file__', '').find(COMPAT) < 0:
+        _use_compat_matplotlib()
     if PACKAGE in sys.modules:
         return sys.modules[PACKAGE]
     init = os.path.join(UPSTREAM, '__init__.py')
@@ -28,7 +56,20 @@ def _load_upstream():
     except BaseException:
         sys.modules.pop(PACKAGE, None)
         raise
+    accelerometer = importlib.import_module(PACKAGE + '.helpers.accelerometer')
+    _patch_broken_semaphores(accelerometer)
+    import _nst_measurements
+    _nst_measurements.install(accelerometer)
     return module
+
+
+def _patch_broken_semaphores(accelerometer):
+    """Recording uses multiprocessing.Queue/Value, which hang when POSIX semaphores are broken (K1 firmware)."""
+    import _nst_pipequeue
+    if not _nst_pipequeue.semaphores_broken():
+        return
+    accelerometer.Queue = _nst_pipequeue.PipeQueue
+    accelerometer.Value = _nst_pipequeue.SharedValue
 
 
 class _Config:
