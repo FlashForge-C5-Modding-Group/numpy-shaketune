@@ -56,7 +56,18 @@ def _load_upstream():
     except BaseException:
         sys.modules.pop(PACKAGE, None)
         raise
+    _patch_broken_semaphores()
     return module
+
+
+def _patch_broken_semaphores():
+    """Recording uses multiprocessing.Queue/Value, which hang when POSIX semaphores are broken (K1 firmware)."""
+    import _nst_pipequeue
+    if not _nst_pipequeue.semaphores_broken():
+        return
+    accelerometer = importlib.import_module(PACKAGE + '.helpers.accelerometer')
+    accelerometer.Queue = _nst_pipequeue.PipeQueue
+    accelerometer.Value = _nst_pipequeue.SharedValue
 
 
 class _Config:
