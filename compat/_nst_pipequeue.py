@@ -1,5 +1,6 @@
 # Semaphore-free stand-ins for multiprocessing.Queue and Value, for systems whose POSIX semaphores are broken
 # (Creality K1 firmware). One producer and one consumer, shared through fork. See README.md.
+import io
 import mmap
 import os
 import pickle
@@ -22,9 +23,20 @@ class PipeQueue:
         _COUNTER.pack_into(self._counts, slot * _COUNTER.size, self._count(slot) + 1)
 
     def put(self, obj, block=True, timeout=None):
-        data = pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
-        view = memoryview(struct.pack('I', len(data)) + data)
+        # no memo table: measurements are big flat lists, and the memo costs more time and memory than it saves
+        buf = io.BytesIO()
+        pickler = pickle.Pickler(buf, pickle.HIGHEST_PROTOCOL)
+        pickler.fast = True
+        pickler.dump(obj)
+        data = buf.getbuffer()
         self._bump(0)
+        self._write(struct.pack('I', len(data)))
+        self._write(data)
+        del data
+        buf.close()
+
+    def _write(self, data):
+        view = memoryview(data)
         while view:
             view = view[os.write(self._w, view):]
 

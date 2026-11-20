@@ -2,7 +2,7 @@
 import numpy as np
 
 from . import colors as mcolors
-from ._render import Canvas, write_png
+from ._render import Canvas, write_png_rows
 from .axes import Axes, Axes3D, PolarAxes, _text_kw
 
 
@@ -196,7 +196,7 @@ class Figure:
             canvas.text(t.x * W, (1 - t.y) * H, t.s, k['size'] * dpi / 72.0, mcolors.to_rgb(k['color']), k['alpha'],
                         k['weight'], k['ha'], k['va'], k['rotation'])
         fname = str(fname)
-        write_png(fname, canvas.to_rgba8(), dpi)
+        write_png_rows(fname, canvas.png_bands(), W, H, 3, dpi)
 
     def clf(self):
         self._axes, self._texts, self._current = [], [], None
