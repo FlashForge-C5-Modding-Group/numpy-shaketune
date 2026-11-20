@@ -66,6 +66,9 @@ It finds `/usr/data/klipper` (Kalico) and `/usr/data/printer_data/config`, and r
   Klipper loads works on 3.8.
 - Memory is tight on a K1 SE (209 MB): an input shaper graph peaks around 105 MB and takes about a minute. Simple AF's
   128 MB swap file covers the rest. Close the camera stream while Shake&Tune draws if Klipper reports timer errors.
+- The K1's POSIX semaphores are broken, so `multiprocessing.Queue` and `Value` hang and recordings never get written.
+  When the loader finds that, it gives Shake&Tune's recorder a pipe-based queue and shared-memory flag instead
+  (`compat/_nst_pipequeue.py`). Other systems keep the real ones.
 - Simple AF's own `BELTS_SHAPER_CALIBRATION` macro stays; Shake&Tune's belts test is `COMPARE_BELTS_RESPONSES`.
 
 ## How it loads
